@@ -12,7 +12,7 @@ return new class extends Migration
         Schema::create('dossier_medical', function (Blueprint $table) {
             $table->id();
             $table->foreignId('patient_id')->constrained('patients')->cascadeOnDelete();
-            $table->foreignId('medecin_id')->constrained('users')->cascadeOnDelete();
+            $table->foreignId('medecin_id')->constrained('medecins')->cascadeOnDelete();
             $table->unique(['patient_id', 'medecin_id']);
             $table->timestamps();
         });

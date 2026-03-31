@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { background:#0F172A; width:100vw; height:100vh; overflow:hidden; position:relative; }
+    #remoteVideo { width:100%; height:100%; object-fit:cover; background:#1E293B; display:block; }
+    #localVideo {
+      position:absolute; bottom:16px; right:16px;
+      width:110px; height:150px; object-fit:cover;
+      border-radius:12px; border:2px solid #3B82F6;
+      background:#334155; z-index:10;
+    }
+    #statusBar {
+      position:absolute; top:80px; left:50%; transform:translateX(-50%);
+      background:rgba(0,0,0,0.65); color:#FFF;
+      padding:6px 18px; border-radius:20px;
+      font-size:13px; font-family:sans-serif; z-index:10; white-space:nowrap;
+    }
+    #waiting {
+      position:absolute; top:50%; left:50%;
+      transform:translate(-50%,-50%);
+      text-align:center; color:#94A3B8; font-family:sans-serif; z-index:5;
+    }
+    #waiting p { font-size:15px; margin-top:12px; }
+  </style>
+</head>
+<body>
+  <video id="remoteVideo" autoplay playsinline></video>
+  <video id="localVideo"  autoplay playsinline muted></video>
+  <div id="statusBar"><span id="statusText">Initialisation...</span></div>
+  <div id="waiting">
+    <svg width="64" height="64" fill="#475569" viewBox="0 0 24 24">
+      <path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z"/>
+    </svg>
+    <p>En attente de l'autre participant...</p>
+  </div>
+
+<script>
+// ── Params depuis l'URL ───────────────────────────────────────
+const params  = new URLSearchParams(window.location.search);
+const ROLE    = params.get("role")    || "patient";
+const ROOM_ID = params.get("room_id") || "";
+const USER_ID = parseInt(params.get("user_id") || "0");
+const WS_HOST = params.get("ws_host") || "10.147.34.83";
+const WS_PORT = params.get("ws_port") || "8080";
+const WS_KEY  = params.get("ws_key")  || "apehg0qytguy7ggxdyuy";
+const API_URL = params.get("api_url") || "";
+const TOKEN   = params.get("token")   || "";
+const CONSULT_ID = params.get("consultation_id") || "";
+
+const WS_URL = "ws://" + WS_HOST + ":" + WS_PORT + "/app/" + WS_KEY;
+
+let pc = null, localStream = null, ws = null;
+let pendingCandidates = [];
+
+const statusText  = document.getElementById("statusText");
+const waitingEl   = document.getElementById("waiting");
+const remoteVideo = document.getElementById("remoteVideo");
+const localVideo  = document.getElementById("localVideo");
+
+function log(msg) {
+  statusText.textContent = msg;
+  window.ReactNativeWebView?.postMessage(JSON.stringify({ type:"status", message:msg }));
+}
+
+// ── Envoyer signal via API Laravel ────────────────────────────
+async function sendSignal(type, data) {
+  try {
+    await fetch(API_URL + "/consultations/" + CONSULT_ID + "/video/signal", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Authorization": "Bearer " + TOKEN,
+        "bypass-tunnel-reminder": "true",
+      },
+      body: JSON.stringify({ type, data: data ?? {} }),
+    });
+  } catch(e) {
+    console.error("sendSignal error:", e);
+  }
+}
+
+// ── WebSocket Reverb ──────────────────────────────────────────
+function connectWS() {
+  log("Connexion WebSocket...");
+  ws = new WebSocket(WS_URL);
+
+  ws.onopen = () => {
+    log("WebSocket OK");
+    ws.send(JSON.stringify({
+      event: "pusher:subscribe",
+      data:  { channel: "consultation." + ROOM_ID }
+    }));
+    startCamera();
+  };
+
+  ws.onmessage = async (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (!msg.event || msg.event.startsWith("pusher:")) return;
+
+      const payload = typeof msg.data === "string" ? JSON.parse(msg.data) : msg.data;
+      if (!payload || !payload.type) return;
+      if (payload.senderId === USER_ID) return;
+
+      const t = payload.type;
+      log("Signal: " + t);
+
+      if (t === "join" && ROLE === "medecin") {
+        log("Patient connecté — offre...");
+        await createOffer();
+      }
+
+      if (t === "offer" && ROLE === "patient") {
+        log("Offre reçue...");
+        await pc.setRemoteDescription(new RTCSessionDescription(payload.data));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        await sendSignal("answer", answer);
+        for (const c of pendingCandidates) await pc.addIceCandidate(new RTCIceCandidate(c));
+        pendingCandidates = [];
+      }
+
+      if (t === "answer" && ROLE === "medecin") {
+        log("Réponse reçue...");
+        await pc.setRemoteDescription(new RTCSessionDescription(payload.data));
+        for (const c of pendingCandidates) await pc.addIceCandidate(new RTCIceCandidate(c));
+        pendingCandidates = [];
+      }
+
+      if (t === "ice-candidate") {
+        if (pc && pc.remoteDescription) {
+          await pc.addIceCandidate(new RTCIceCandidate(payload.data));
+        } else {
+          pendingCandidates.push(payload.data);
+        }
+      }
+
+      if (t === "end") { log("Consultation terminée"); hangUp(); }
+
+    } catch(err) { console.error("WS error:", err); }
+  };
+
+  ws.onerror = () => log("Erreur WebSocket");
+  ws.onclose = () => log("WebSocket déconnecté");
+}
+
+// ── Caméra ────────────────────────────────────────────────────
+async function startCamera() {
+  try {
+    log("Accès caméra...");
+    localStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user" }, audio: true
+    });
+    localVideo.srcObject = localStream;
+
+    pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+      ]
+    });
+
+    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+
+    pc.ontrack = (e) => {
+      waitingEl.style.display = "none";
+      remoteVideo.srcObject   = e.streams[0];
+      log("✅ Consultation en cours");
+    };
+
+    pc.onicecandidate = (e) => {
+      if (e.candidate) sendSignal("ice-candidate", e.candidate);
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      const s = pc.iceConnectionState;
+      if (s === "connected" || s === "completed") log("✅ Consultation en cours");
+      if (s === "disconnected") log("Connexion interrompue...");
+      if (s === "failed") log("Connexion échouée");
+    };
+
+    if (ROLE === "medecin") {
+      log("En attente du patient...");
+    } else {
+      log("Notification présence...");
+      await sendSignal("join", {});
+    }
+
+  } catch(err) {
+    log("Erreur caméra: " + err.message);
+  }
+}
+
+async function createOffer() {
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  await sendSignal("offer", offer);
+  log("Offre envoyée...");
+}
+
+function hangUp() {
+  pc?.close(); pc = null;
+  localStream?.getTracks().forEach(t => t.stop());
+  remoteVideo.srcObject = null;
+  localVideo.srcObject  = null;
+}
+
+window.addEventListener("message", (e) => {
+  try { const msg = JSON.parse(e.data); if (msg.type === "end") hangUp(); } catch(_) {}
+});
+
+connectWS();
+</script>
+</body>
+</html>

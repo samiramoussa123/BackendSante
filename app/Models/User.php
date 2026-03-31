@@ -9,27 +9,25 @@ use Tymon\JWTAuth\Contracts\JWTSubject;
 
 class User extends Authenticatable implements JWTSubject
 {
-    use HasFactory, Notifiable; // Supprimé HasApiTokens qui est pour Sanctum
+    use HasFactory, Notifiable; 
 
     protected $fillable = [
-        'nom',
-        'prenom',
-        'email',
-        'adresse',
-        'telephone',
-        'age',
-        'password',
-        'role',
-        'photo',
-        
+        'nom', 'prenom', 'email', 'adresse',
+        'telephone', 'age', 'mdp', 'role', 'photo',
+        'email_verified_at', 'email_verification_token',
     ];
 
     protected $hidden = [
-        'password',
+        'mdp',
         'remember_token',
     ];
 
-    // Relations par rôle (héritage logique)
+    // ← AJOUTER CECI
+    public function getAuthPassword()
+    {
+        return $this->mdp;
+    }
+
     public function patient()
     {
         return $this->hasOne(Patient::class);
@@ -45,7 +43,6 @@ class User extends Authenticatable implements JWTSubject
         return $this->hasOne(Admin::class);
     }
 
-    // Méthodes JWT
     public function getJWTIdentifier()
     {
         return $this->getKey();

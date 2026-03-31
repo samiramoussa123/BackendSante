@@ -4,9 +4,11 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use App\Models\Medecin;
+use Illuminate\Notifications\Notifiable;
 class Patient extends Model
 
 {
+    use Notifiable;
      protected $fillable = [
         'user_id',
         'dateNaissance',
@@ -20,5 +22,13 @@ public function medecin()
 {
     return $this->belongsTo(Medecin::class, 'medecin_id');
 }
-    //
+    public function routeNotificationForMail(): string
+    {
+        return $this->user->email ?? '';
+    }
+
+     public function routeNotificationForCanalPush(): string
+    {
+        return 'patient.' . $this->id;
+    }
 }

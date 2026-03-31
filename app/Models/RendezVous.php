@@ -16,7 +16,8 @@ class RendezVous extends Model
         'id_medecin',
         'date',
         'heure',
-        'etat'
+        'etat',
+        'rappel_matin_envoye_le', 'rappel_une_heure_envoye_le',
     ];
     protected $casts = [
         'etat' => 'string',

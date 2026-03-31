@@ -13,16 +13,13 @@ class Gestion_Profile extends Controller
 {
     public function __construct()
     {
-        $this->middleware('auth:api');
+        $this->middleware('auth:api',['except' => ['afficheMedecin'],['AfficherProfile'],['affichePatient']]);
     }
 
     public function MonProfile()
     {
         $user = auth('api')->user()->load(['patient', 'medecin']);
-
-        return response()->json([
-            'user' => $user
-        ]);
+        return response()->json(['user' => $user]);
     }
 
     public function AfficherProfile($id)
@@ -30,85 +27,53 @@ class Gestion_Profile extends Controller
         if (auth('api')->user()->role !== 'admin') {
             return response()->json(['message' => 'Non autorisé'], 403);
         }
-
         $user = User::with(['patient', 'medecin'])->find($id);
-
         if (!$user) {
             return response()->json(['message' => 'Utilisateur non trouvé'], 404);
         }
-
         return response()->json(['user' => $user]);
     }
 
-    
     public function ModifierProfile(Request $request, $id)
     {
         $authUser = auth('api')->user();
         $user = User::with(['patient', 'medecin'])->find($id);
-
         if (!$user) {
             return response()->json(['message' => 'Utilisateur non trouvé'], 404);
         }
-
-        
         if ($authUser->id !== $user->id && $authUser->role !== 'admin') {
             return response()->json(['message' => 'Non autorisé'], 403);
         }
-
-        // Validation commune
         $request->validate([
-            'nom' => 'sometimes|string|max:255',
-            'prenom' => 'sometimes|string|max:255',
-            'adresse' => 'nullable|string|max:255',
-            'telephone' => 'nullable|string|size:8',
-            'age' => 'nullable|integer|min:1|max:120',
+            'nom'           => 'sometimes|string|max:255',
+            'prenom'        => 'sometimes|string|max:255',
+            'adresse'       => 'nullable|string|max:255',
+            'telephone'     => 'nullable|string|size:8',
+            'age'           => 'nullable|integer|min:1|max:120',
             'dateNaissance' => 'sometimes|date',
-            'sexe' => 'sometimes|in:homme,femme',
-            'specialite' => 'sometimes|exists:specialite,nom_specialite',
-            'experience' => 'sometimes|integer|min:0'
+            'sexe'          => 'sometimes|in:homme,femme',
+            'specialite'    => 'sometimes|exists:specialite,nom_specialite',
+            'experience'    => 'sometimes|integer|min:0'
         ]);
-
-        
-        $user->update($request->only([
-            'nom',
-            'prenom',
-            'adresse',
-            'telephone',
-            'age',
-        ]));
-
-        
+        $user->update($request->only(['nom', 'prenom', 'adresse', 'telephone', 'age']));
         if ($user->role === 'patient' && $user->patient) {
-            $user->patient->update($request->only([
-                'dateNaissance',
-                'sexe'
-            ]));
+            $user->patient->update($request->only(['dateNaissance', 'sexe']));
         }
-
-        
         if ($user->role === 'medecin' && $user->medecin) {
-
             if ($request->has('specialite')) {
-                $specialite = Specialite::where(
-                    'nom_specialite',
-                    $request->specialite
-                )->first();
-
+                $specialite = Specialite::where('nom_specialite', $request->specialite)->first();
                 if ($specialite) {
                     $user->medecin->specialite_id = $specialite->id;
                 }
             }
-
             if ($request->has('experience')) {
                 $user->medecin->experience = $request->experience;
             }
-
             $user->medecin->save();
         }
-
         return response()->json([
             'message' => 'Profil mis à jour avec succès',
-            'user' => $user->fresh(['patient', 'medecin'])
+            'user'    => $user->fresh(['patient', 'medecin'])
         ]);
     }
 
@@ -117,32 +82,21 @@ class Gestion_Profile extends Controller
         if (auth('api')->user()->role !== 'admin') {
             return response()->json(['message' => 'Non autorisé'], 403);
         }
-
         $user = User::find($id);
-
         if (!$user) {
             return response()->json(['message' => 'Utilisateur non trouvé'], 404);
         }
-
         $user->delete();
-
-        return response()->json([
-            'message' => 'Utilisateur supprimé avec succès'
-        ]);
+        return response()->json(['message' => 'Utilisateur supprimé avec succès']);
     }
 
-   
     public function AfficherTousProfiles()
     {
         if (auth('api')->user()->role !== 'admin') {
             return response()->json(['message' => 'Non autorisé'], 403);
         }
-
         $users = User::with(['patient', 'medecin'])->get();
-
-        return response()->json([
-            'users' => $users
-        ]);
+        return response()->json(['users' => $users]);
     }
 
     public function afficheMedecin()
@@ -152,26 +106,19 @@ class Gestion_Profile extends Controller
             ->get()
             ->map(function ($m) {
                 $photoUrl = null;
-                
                 if ($m->photo) {
-                    // Si c'est déjà une URL complète
                     if (filter_var($m->photo, FILTER_VALIDATE_URL)) {
                         $photoUrl = $m->photo;
-                    } 
-                    // Si c'est un chemin avec "uploads/", on extrait juste le nom du fichier
-                    elseif (strpos($m->photo, 'uploads/') !== false) {
-                        $filename = basename($m->photo); 
-                        $photoUrl = url('storage/photos/' . $filename);
-                    }
-                    // Si c'est juste un nom de fichier
-                    else {
-                        // CORRECTION: Ajout de "photos/" pour être cohérent avec modifierPhoto()
+                    } elseif (strpos($m->photo, 'uploads/') !== false) {
+                        $photoUrl = url('storage/photos/' . basename($m->photo));
+                    } else {
                         $photoUrl = url('storage/photos/' . $m->photo);
                     }
                 }
-                
+
                 return [
                     'id'             => $m->id,
+                    'medecin_id'     => $m->medecin->id ?? null,
                     'nom'            => $m->nom,
                     'prenom'         => $m->prenom,
                     'email'          => $m->email,
@@ -196,25 +143,19 @@ class Gestion_Profile extends Controller
             ->get()
             ->map(function ($p) {
                 $photoUrl = null;
-                
                 if ($p->photo) {
-                    // Si c'est déjà une URL complète
                     if (filter_var($p->photo, FILTER_VALIDATE_URL)) {
                         $photoUrl = $p->photo;
-                    } 
-                    // Si c'est un chemin avec "uploads/", on extrait juste le nom du fichier
-                    elseif (strpos($p->photo, 'uploads/') !== false) {
-                        $filename = basename($p->photo);
-                        $photoUrl = url('storage/photos/' . $filename);
-                    }
-                    // Si c'est juste un nom de fichier
-                    else {
+                    } elseif (strpos($p->photo, 'uploads/') !== false) {
+                        $photoUrl = url('storage/photos/' . basename($p->photo));
+                    } else {
                         $photoUrl = url('storage/photos/' . $p->photo);
                     }
                 }
-                
                 return [
                     'id'            => $p->id,
+                    //  AJOUT : id de la table patients (utilisé pour les rendez-vous)
+                    'patient_id'    => $p->patient->id ?? null,
                     'nom'           => $p->nom,
                     'prenom'        => $p->prenom,
                     'email'         => $p->email,
@@ -231,40 +172,29 @@ class Gestion_Profile extends Controller
         return response()->json($patients);
     }
 
-
-public function modifierPhoto(Request $req)
-{
-    $user = auth('api')->user();
-
-    if (!$user) {
-        return response()->json(['message' => 'Utilisateur non authentifié'], 401);
-    }
-
-    if ($req->hasFile('photo')) {
-        // Supprimer l'ancienne photo
-        if ($user->photo) {
-            Storage::disk('public')->delete('photos/' . $user->photo);
+    public function modifierPhoto(Request $req)
+    {
+        $user = auth('api')->user();
+        if (!$user) {
+            return response()->json(['message' => 'Utilisateur non authentifié'], 401);
         }
-
-        $file = $req->file('photo');
-        
-        $originalName = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
-        $extension    = $file->getClientOriginalExtension();
-        $safeName     = preg_replace('/[^a-zA-Z0-9_-]/', '_', $originalName);
-        $filename     = time() . '_' . $safeName . '.' . $extension;
-
-        // Stocker avec le disk public
-        $path = $file->storeAs('photos', $filename, 'public');
-
-        $user->photo = $filename;
-        $user->save();
-
-        return response()->json([
-            'message' => 'Photo mise à jour avec succès',
-            'photo'   => $filename
-        ], 200);
+        if ($req->hasFile('photo')) {
+            if ($user->photo) {
+                Storage::disk('public')->delete('photos/' . $user->photo);
+            }
+            $file         = $req->file('photo');
+            $originalName = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
+            $extension    = $file->getClientOriginalExtension();
+            $safeName     = preg_replace('/[^a-zA-Z0-9_-]/', '_', $originalName);
+            $filename     = time() . '_' . $safeName . '.' . $extension;
+            $file->storeAs('photos', $filename, 'public');
+            $user->photo = $filename;
+            $user->save();
+            return response()->json([
+                'message' => 'Photo mise à jour avec succès',
+                'photo'   => $filename
+            ], 200);
+        }
+        return response()->json(['message' => 'Aucun fichier envoyé'], 400);
     }
-
-    return response()->json(['message' => 'Aucun fichier envoyé'], 400);
-}
 }

@@ -13,35 +13,54 @@ return new class extends Migration
     {
         // Table users
         Schema::create('users', function (Blueprint $table) {
+
             $table->id();
 
             $table->string('nom')->nullable();
             $table->string('prenom')->nullable();
+
             $table->string('email')->unique();
             $table->string('adresse')->nullable();
             $table->string('telephone')->nullable();
+
             $table->integer('age')->nullable();
-            $table->string('password');
+
+            $table->string('mdp');
+
+            // roles
             $table->string('role'); // patient, medecin, admin
+
+            // verification email
             $table->timestamp('email_verified_at')->nullable();
+            $table->string('email_verification_token')->nullable();
+
             $table->rememberToken();
+
             $table->timestamps();
         });
 
-        // Table password_reset_tokens
+
+        // Table password reset
         Schema::create('password_reset_tokens', function (Blueprint $table) {
+
             $table->string('email')->primary();
             $table->string('token');
             $table->timestamp('created_at')->nullable();
         });
 
+
         // Table sessions
         Schema::create('sessions', function (Blueprint $table) {
+
             $table->string('id')->primary();
+
             $table->foreignId('user_id')->nullable()->index();
+
             $table->string('ip_address', 45)->nullable();
             $table->text('user_agent')->nullable();
+
             $table->longText('payload');
+
             $table->integer('last_activity')->index();
         });
     }
